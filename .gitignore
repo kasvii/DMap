@@ -25,3 +25,13 @@ checkpoints/
 
 # system
 .DS_Store
+
+# logs & outputs
+logs/
+outputs/
+checkpoints/
+data/
+fitting-results/
+*.ckpt
+*.pth
+*.pt
