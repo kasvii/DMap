@@ -32,6 +32,7 @@ outputs/
 checkpoints/
 data/
 fitting-results/
+tmp/
 *.ckpt
 *.pth
 *.pt
