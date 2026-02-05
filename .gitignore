@@ -1,0 +1,27 @@
+# python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+dist/
+build/
+
+# environments
+.venv/
+venv/
+.env
+
+# jupyter
+.ipynb_checkpoints/
+
+# logs & outputs
+logs/
+outputs/
+checkpoints/
+*.ckpt
+*.pth
+*.pt
+
+# system
+.DS_Store
