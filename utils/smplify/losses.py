@@ -7,75 +7,50 @@ from pytorch3d.structures import Meshes
 from pytorch3d.renderer import TexturesVertex
 
 def gmof(x, sigma):
-    """
-    Geman-McClure error function
-    """
     x_squared = x ** 2
     sigma_squared = sigma ** 2
     return (sigma_squared * x_squared) / (sigma_squared + x_squared)
 
 
 def compute_jitter(x):
-    """
-    Compute jitter for the input tensor
-    """
     return torch.linalg.norm(x[:, 2:] + x[:, :-2] - 2 * x[:, 1:-1], dim=-1)
 
 def get_max_mask_y(mask):
-    """
-    mask: [H, W], float32 or bool
-    return: scalar int, 最大 y（最底下的白点的 y）
-    """
-    y_indices = torch.arange(mask.shape[0], device=mask.device).view(-1, 1)  # shape [H, 1]
-    mask_flat = mask > 0.5  # 二值化
-
-    # 找出每列中为1的点的 y 坐标，然后取最大
-    y_masked = y_indices * mask_flat  # shape [H, W]
-    max_y = y_masked.max()  # 所有列中最底下的 y
+    y_indices = torch.arange(mask.shape[0], device=mask.device).view(-1, 1)
+    mask_flat = mask > 0.5
+    y_masked = y_indices * mask_flat
+    max_y = y_masked.max()
     return max_y
 
 def overlay_images(body_seg, mask_full, alpha=0.5):
-    # 1. 确保两张图像大小一致
     if body_seg.shape[:2] != mask_full.shape[:2]:
         mask_full = cv2.resize(mask_full, (body_seg.shape[1], body_seg.shape[0]))
 
-    # 2. 确保 mask_full 是 3 通道（如果是灰度图，则转换为 BGR）
     if len(body_seg.shape) == 2:
         body_seg = cv2.cvtColor(body_seg, cv2.COLOR_GRAY2BGR)
 
-    # 3. 叠加图像
     blended = cv2.addWeighted(body_seg, 1 - alpha, mask_full, alpha, 0)
     return blended
 
-# faces_cloth = torch.LongTensor(cloth_pose.faces).cuda()
 verts_zero = torch.zeros((6890, 3)).cuda()*0
-# cloth_rgb = torch.zeros(len(verts_cloth_zero), 3) + 255 # (1, V, 3)
-# verts_rgb = cloth_rgb[None]
-# textures = TexturesVertex(verts_features=verts_rgb.cuda())
         
 def render_body(body_idx, smpl_output, renderer_textured_soft, trans_cam, faces, device, scale=1):
-    # 保留 verts 的梯度路径（用于优化 SMPL）
     verts = smpl_output.vertices[body_idx] * scale
     joints_smpl = smpl_output.joints[body_idx] * scale
     verts = verts - joints_smpl[[0]]
-    verts[:, 1:] *= -1  # Y/Z轴反转（右手系 → 图像系）
+    verts[:, 1:] *= -1
 
-    # RGB 顶点颜色，不参与训练
     verts_rgb = torch.zeros(len(verts), 3, device=device)
     verts_rgb[:, 1] += 255
-    textures = TexturesVertex(verts_features=verts_rgb[None])  # [1, V, 3]
+    textures = TexturesVertex(verts_features=verts_rgb[None])
 
-    # 模板 mesh：不参与训练
     mesh_template = Meshes(verts=[verts_zero.detach()], faces=[faces], textures=textures)
 
-    # 使用 offset_verts 添加真实 verts（这个 verts 会传梯度）
     mesh = mesh_template.offset_verts(verts)
 
-    # 渲染输出（image retains gradient！）
-    image = renderer_textured_soft(mesh)  # [1, H, W, 3]
-    mask = image[0, :, :, 1] / 255.0      # [H, W], float32, requires_grad
+    image = renderer_textured_soft(mesh)
+    mask = image[0, :, :, 1] / 255.0
 
-    # 仅保存用的 uint8 版本（detach，不留图）
     mask_uint8 = (mask.detach() * 255).cpu().numpy().astype(np.uint8)
 
     return mask, mask_uint8
@@ -105,17 +80,10 @@ class SMPLifyLoss(torch.nn.Module):
                 smooth_weight=100.0, sigma=100, mask_weight=50.0, feet_weight=100.0, **kwargs):
         
         pose, shape, cam = params
-        # print(f"{pose.shape=} {shape.shape=} {cam.shape=}") # pose.shape=torch.Size([1, 122, 144]) shape.shape=torch.Size([1, 122, 10]) cam.shape=torch.Size([1, 122, 3])
-        # sys.exit()
-        # scale = bbox[..., 2:].unsqueeze(-1) * 200.
-        # print(f"{scale=}")
         
-        # Loss 1. Data term
-        # pred_keypoints = output.full_joints2d[..., :17, :] # torch.Size([1, 122, 17, 2])
         joints_smpl = output.joints * scale
         joints_wham = output.joints_wham * scale
         joints = joints_wham - joints_smpl[:,[0]]
-        # print(f"{joints.shape=}")
         joints[:,:,1:] *=-1
         pred_keypoints = transform.transform_points(joints).unsqueeze(0)
         pred_keypoints = (-pred_keypoints[:,:,:17,:2] + 1)/2*511
@@ -126,43 +94,31 @@ class SMPLifyLoss(torch.nn.Module):
             for point in kp2d_vis:
                 cv2.circle(img, (int(point[0]), int(point[1])), 5, (0, 255, 0), -1)
             cv2.imwrite(f'../../tmp/opt_pred_kp2d_{iter_num:04d}.png', img)
-        # sys.exit()
     
         joints_conf = input_keypoints[..., -1:]
-        # print(f"{input_keypoints.shape=} {pred_keypoints.shape=}")
         reprojection_error = gmof(pred_keypoints - input_keypoints[..., :-1], sigma)
         reprojection_error = ((reprojection_error * joints_conf)).mean() / 512
-        # print(f"{reprojection_error.item()=}") # reprojection_error.item()=0.058
         
-        # Loss 2. Regularization term
         regularize_error = torch.linalg.norm(pose - self.init_pose, dim=-1).mean()
-        # print(f"{regularize_error.item()=}")
         
-        # Loss 3. Shape prior and consistency error
-        # print(f'{shape.shape=}') # [122, 10]
         consistency_error = shape.std(dim=1).mean()
         sprior_error = torch.linalg.norm(shape, dim=-1).mean() * 0
         shape_error = sprior_weight * sprior_error + consistency_weight * consistency_error
         
-        # Loss 4. Smooth loss
         pose_diff = compute_jitter(pose).mean()
         cam_diff = compute_jitter(cam).mean()
         smooth_error = pose_diff + cam_diff
-        # print(f"{smooth_error.item()=}") # smooth_error.item()=0.09
         
-        # Loss 5. Mask loss
         mask_uint8 = None
         loss_mask = torch.tensor(0).float().cuda()
         loss_feet = torch.tensor(0).float().cuda()
         if mask_full is not None:
-            # print(f"{output.vertices.shape[0]=}")
             for body_idx in range(output.vertices.shape[0]):
-                # with torch.no_grad():
                 mask, mask_uint8 = render_body(body_idx, output, renderer_textured_soft, trans_cams[body_idx], faces, self.init_pose.device, scale)
                 mask_gt = mask_full[body_idx][..., 0] / 255
                 intersection = (mask * mask_gt).sum()
                 union = mask.sum() + mask_gt.sum() - intersection
-                loss_mask = loss_mask + (1 - intersection/union) #*224
+                loss_mask = loss_mask + (1 - intersection/union)
                 max_mask_gt_y = get_max_mask_y(mask_gt)
                 max_mask_pred_y = get_max_mask_y(mask)
                 loss_feet = loss_feet + torch.abs(max_mask_gt_y - max_mask_pred_y) / 256
@@ -176,7 +132,6 @@ class SMPLifyLoss(torch.nn.Module):
             loss_mask = loss_mask / output.vertices.shape[0]
             loss_feet = loss_feet / output.vertices.shape[0]
             
-        # Sum up losses
         loss = {
             'reprojection': reprojection_weight * reprojection_error,
             'regularize': regularize_weight * regularize_error,
@@ -191,7 +146,7 @@ class SMPLifyLoss(torch.nn.Module):
         with open(f'{self.save_path}', 'a') as f:
             f.write(msg + '\n')
         
-        return loss # , mask_uint8
+        return loss
         
     def create_closure(self,
                        optimizer,
@@ -213,10 +168,6 @@ class SMPLifyLoss(torch.nn.Module):
             loss_dict = self.forward(self.iter_num, output, params, input_keypoints, bbox, mask_full, renderer_textured_soft, transform, trans_cams, faces, scale, **kwargs)
             loss = sum(loss_dict.values())
             loss.backward()
-            # print("Loss:", loss.item())
-            # for p in params:
-            #     print("Leaf:", p.is_leaf, "Grad:", p.grad)
-            # print(loss.grad_fn)
             return loss
         
         return closure

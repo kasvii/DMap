@@ -41,10 +41,7 @@ class TemporalSMPLify_GAR():
         BN = pose.shape[0]
         lr = self.lr
         
-        params = [to_params(pose), betas] # 
-        # for p in params:
-        #     print(p.is_leaf)  # 只有 True 的张量才会有 .grad
-        # sys.exit()
+        params = [to_params(pose), betas]
         
         optimizer = torch.optim.Adam(
             params, 
@@ -71,8 +68,6 @@ class TemporalSMPLify_GAR():
         for j in (j_bar := tqdm(range(self.num_steps), leave=False)):
             print(f"Iter: {j}")
             optimizer.zero_grad()
-            # for p in params:
-            #     print(p.requires_grad, p.grad)
             loss = optimizer.step(closure)
             msg = f'Loss: {loss.item():.1f}'
             j_bar.set_postfix_str(msg)
