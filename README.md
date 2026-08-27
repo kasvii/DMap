@@ -1,7 +1,7 @@
 # Spatio-Temporal Garment Reconstruction Using Diffusion Mapping via Pattern Coordinates
 <p align="center"><img src="figs/teaser.png"></p>
 
-This is the repo for **Spatio-Temporal Garment Reconstruction Using Diffusion Mapping via Pattern Coordinates**.
+This is the repo for [**Spatio-Temporal Garment Reconstruction Using Diffusion Mapping via Pattern Coordinates**](https://arxiv.org/pdf/2602.24043).
 
 ## Setup & Install
 
